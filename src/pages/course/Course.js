@@ -10,6 +10,8 @@ import { Radio, Space, notification, Progress } from "antd";
 import { LeftOutlined, RightOutlined, CheckOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
 import Loading from "../../components/global/Loading";
+import ClaimModal from "../../components/course/ClaimModal";
+import HoverButton from "../../components/global/HoverButton";
 
 const Course = () => {
   const { save } = useNewMoralisObject("userCourse");
@@ -21,53 +23,66 @@ const Course = () => {
     [user],
     { autoFetch: false }
   );
+  const { fetch: fetchAllowed } = useMoralisQuery(
+    "allowedList",
+    (query) => query.equalTo("ethAddress", user?.attributes?.ethAddress),
+    [user],
+    { autoFetch: false }
+  );
+
+  const { fetch: fetchShowClaim } = useMoralisQuery(
+    "poapLink",
+    (query) => query.equalTo("ethAddress", user?.get("ethAddress")),
+    [user],
+    { autoFetch: false }
+  );
 
   const [dataToShow, setDataToShow] = useState({});
   const [optionSelected, setOptionSelected] = useState();
   const [showValidation, setShowValidation] = useState(true);
   const [showClaim, setShowClaim] = useState(false);
+  const [showClaimModal, setShowClaimModal] = useState(false);
+  const [poapLink, setPoapLink] = useState("");
   const navigate = useNavigate();
 
   useEffect(() => {
     if (isAuthenticated && firstLoad === 0) {
       setFirstLoad(1);
-      fetch();
+      loadChapterData();
     }
   }, [isAuthenticated]);
 
-  useEffect(() => {
-    if (firstLoad !== 0) {
-      if (data.length > 0) {
-        if (firstLoad === 1) {
-          setFirstLoad(2);
-          let auxData = data.length;
-          while (auxData - 1 >= helper.length) {
-            auxData--;
-          }
-          setDataToShow(helper[auxData - 1]);
-        } else {
-          if (data.length > dataToShow.chapter) {
-            dataToShow.questions.options.forEach((option, index) => {
-              if (option.value) {
-                setOptionSelected(index);
-              }
-            });
+  const loadChapterData = async () => {
+    let dataChapter = await fetch();
+    if (dataChapter.length > 0) {
+      let auxData = dataChapter.length;
+      while (auxData - 1 >= helper.length) {
+        auxData--;
+      }
+      setDataToShow(helper[auxData - 1]);
+    } else {
+      initChapter();
+    }
+  };
 
-            setShowValidation(false);
-            if (dataToShow.chapter === helper.length) {
-              setShowClaim(true);
-            }
-          }
+  const checkIfAnswered = () => {
+    if (data.length > dataToShow.chapter) {
+      dataToShow.questions.options.forEach((option, index) => {
+        if (option.value) {
+          setOptionSelected(index);
         }
-      } else {
-        initChapter();
+      });
+
+      setShowValidation(false);
+      if (dataToShow.chapter === helper.length) {
+        checkAllowedList();
       }
     }
-  }, [data]);
+  };
 
   useEffect(() => {
     if (dataToShow.chapter) {
-      fetch();
+      checkIfAnswered();
     }
   }, [dataToShow]);
 
@@ -76,20 +91,21 @@ const Course = () => {
     setDataToShow(helper[0]);
   };
 
-  const validateAnswer = () => {
+  const validateAnswer = async () => {
     if (dataToShow.questions?.options[optionSelected].value) {
+      await save({
+        ethAddress: user.attributes.ethAddress,
+        chapter: dataToShow.chapter,
+      });
+      await fetch();
       setShowValidation(false);
       notification.success({
         message: "This is correct",
         description: "Go on to the next chapter",
         duration: 5,
       });
-      save({
-        ethAddress: user.attributes.ethAddress,
-        chapter: dataToShow.chapter,
-      });
       if (helper.length === dataToShow.chapter) {
-        setShowClaim(true);
+        checkAllowedList();
       }
     } else {
       notification.error({
@@ -97,6 +113,23 @@ const Course = () => {
         description: "Correct your answer and try again",
         duration: 5,
       });
+    }
+  };
+
+  const checkAllowedList = async () => {
+    let data = await fetchAllowed();
+    if (data.length > 0) {
+      if (!data[0].get("completed")) {
+        data[0].set("completed", true);
+        data[0].save();
+      }
+      let dataClaim = await fetchShowClaim();
+      if (dataClaim.length === 0) {
+        setShowClaim(true);
+      } else {
+        setPoapLink(dataClaim[0].get("link"));
+        setShowClaim(false);
+      }
     }
   };
 
@@ -114,7 +147,7 @@ const Course = () => {
 
   const next = () => {
     if (dataToShow.chapter === helper.length) {
-      setShowClaim(true);
+      checkAllowedList();
       return;
     }
     clearOptions();
@@ -204,24 +237,43 @@ const Course = () => {
           </div>
 
           <div className="w-50 arrow-next">
-            {!showValidation && !showClaim && (
-              <div className="nav-item-home" onClick={next}>
+            {!showValidation &&
+              !showClaim &&
+              helper.length !== dataToShow.chapter && (
+                <div className="nav-item-home" onClick={next}>
+                  <h3>
+                    Next <RightOutlined />
+                  </h3>
+                </div>
+              )}
+
+            {showClaim && (
+              <div
+                className="nav-item-home"
+                onClick={() => setShowClaimModal(true)}
+              >
                 <h3>
-                  Next <RightOutlined />
+                  Claim Reward <CheckOutlined />
                 </h3>
               </div>
             )}
 
-            {showClaim && (
-              <div className="nav-item-home">
-                <h3>
-                  Claim NTT <CheckOutlined />
-                </h3>
-              </div>
+            {poapLink !== "" && (
+              <HoverButton
+                onClick={() => window.open(poapLink, "_blank").focus()}
+                buttonText="Poap Link"
+              />
             )}
           </div>
         </div>
       </div>
+      <ClaimModal
+        show={showClaimModal}
+        setShow={(val) => {
+          setShowClaimModal(val);
+          checkAllowedList();
+        }}
+      />
     </div>
   );
 };
